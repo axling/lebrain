@@ -35,8 +35,9 @@ neuron_recv_expected_learning_test() ->
     Pid ! {learning, self(), 0.4},
     Sensitivity = (0.4-0.5)*0.5,
     Weight = 0.5 + 0.005*Sensitivity*1.0,
+    Expected = Sensitivity*Weight,
     receive
-	{learning, Pid, Sensitivity*Weight} ->
+	{learning, Pid, Expected} ->
 	    ok
     end,
     exit(Pid, normal).
