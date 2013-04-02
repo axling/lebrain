@@ -1,7 +1,7 @@
 -module(lebrain_neuron).
 
 %% exports for plain_fsm
--export([spawn_link/3]).
+-export([spawn_link/1]).
 
 -export([data_vsn/0, code_change/3]).
 
@@ -28,14 +28,23 @@
 data_vsn() ->
     0.
 
-spawn_link(Type, InputNeurons, OutputNeurons) ->
+spawn_link(Type) ->
     plain_fsm:spawn_link(?MODULE,
 			fun() ->
 				process_flag(trap_exit, true),
-				input(init_state(#state{type=Type},
-						 InputNeurons,
-						 OutputNeurons))
+				wait_for_connections(
+				  #state{type=Type})
 			end).
+
+wait_for_connections(#state{type=Type}=State) ->
+    receive
+	{add_neurons, {InputNeurons, OutputNeurons}}
+	  when Type =/= input ->
+	    input(init_state(State, InputNeurons, OutputNeurons));
+	{add_neurons, OutputNeurons} when Type == input ->
+	    input(State#state{output_neurons=OutputNeurons})
+    end.
+	    
 
 init_state(State, InputNeurons, OutputNeurons) ->
     Neurons0 = lists:foldl(
@@ -46,8 +55,13 @@ init_state(State, InputNeurons, OutputNeurons) ->
       State#state{neurons=Neurons0, input_neurons=InputNeurons,
 		  output_neurons=OutputNeurons}).
 
-input(#state{}=State) ->
+input(#state{type=Type}=State) ->
     receive
+	{input, _NeuronPid, Value} when Type == input ->
+	    %% If input node, jsut pass on value to all output neurons
+	    lists:foreach(fun(Pid) -> Pid ! {input, self(), Value} end,
+			  State#state.output_neurons),
+	    learning(State);
 	{input, NeuronPid, Value} ->
 	    {NewStateFunc, NewState} = handle_incoming_value(NeuronPid, Value,
 							     State),
@@ -56,6 +70,9 @@ input(#state{}=State) ->
 
 learning(#state{type=Type}=State) ->
     receive
+	{learning, NeuronPid, SensitivityWeight} when Type==input -> 
+	    %% Throw away value and go to input state
+	    input(State);
 	{learning, NeuronPid, SensitivityWeight} when Type==hidden -> 
 	    {NewStateFunc, NewState} = handle_learning(NeuronPid,
 						       SensitivityWeight,
